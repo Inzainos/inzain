@@ -1,0 +1,11 @@
+# InZain / Fractal Core — dependencias
+# Instalar:  python -m pip install -r requirements.txt
+
+PyQt6>=6.6
+PyQt6-WebEngine>=6.6
+psutil>=5.9
+cryptography>=42.0     # cifrado de sesión (Fernet); si falta, cae a JSON plano
+pyttsx3>=2.90          # lectura por voz (opcional)
+
+# winsound: parte de la librería estándar en Windows (NO instalar por pip).
+# En Linux/macOS los beeps quedan deshabilitados automáticamente.

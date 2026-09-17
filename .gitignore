@@ -1,0 +1,25 @@
+# InZain — artefactos de ejecución y secretos (no versionar)
+__pycache__/
+*.py[cod]
+
+# Datos de perfil / caché del navegador
+inzain_data/
+
+# Sesión y clave (¡nunca subir la clave!)
+inzain.key
+session_inzain.enc
+session_inzain.json
+
+# Logs
+logs/
+*.log
+
+# Empaquetado
+build/
+dist/
+*.spec
+
+# Entorno
+.env
+.venv/
+venv/
