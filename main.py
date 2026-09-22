@@ -6,6 +6,7 @@ Orquesta la UI (inzain_ui) y el núcleo (inzain_core) mediante AppController.
 Inicializa el logging ANTES que nada (regla: siempre generar logs).
 """
 
+import signal
 import sys
 import os
 import time
@@ -53,6 +54,7 @@ class AppController:
         self._init_core()
         self._connect_signals()
         self._start_telemetry()
+        self._install_signal_handlers()
         self._restore_or_open_default()
         self._finalize()
 
@@ -119,6 +121,38 @@ class AppController:
         self.timer_stats.timeout.connect(self.update_system_stats)
         self.timer_stats.start(config.TELEMETRY_INTERVAL_MS)
 
+    def _install_signal_handlers(self) -> None:
+        """Cierra ordenadamente ante SIGTERM/SIGINT para no perder la sesión.
+
+        `_on_quit` cuelga de `aboutToQuit`, que Qt NO dispara cuando el proceso
+        recibe una señal: el bucle de eventos muere en C++ sin avisar y el
+        árbol de pestañas se pierde. Ocurre en un `kill`, al cerrar sesión el
+        sistema operativo o al apagar la máquina.
+
+        Dos piezas hacen falta:
+          1. Traducir la señal en `app.quit()`, que sí emite `aboutToQuit`.
+          2. Un temporizador que devuelva el control al intérprete de Python
+             cada tanto. Sin él, Qt bloquea dentro de C++ y el manejador de
+             Python no llega a ejecutarse hasta el siguiente evento de la UI
+             --- que en un cierre desatendido puede no llegar nunca.
+        """
+        def _al_recibir_senal(numero, _frame):
+            log.info("Señal %s recibida — cierre ordenado.",
+                     signal.Signals(numero).name)
+            self.app.quit()
+
+        for s in (signal.SIGINT, signal.SIGTERM):
+            try:
+                signal.signal(s, _al_recibir_senal)
+            except (ValueError, OSError) as e:  # p.ej. fuera del hilo principal
+                log.warning("No se pudo instalar el manejador de %s: %s", s, e)
+
+        # Late al intérprete para que las señales se procesen aunque la UI
+        # esté quieta. 200 ms es imperceptible y su costo es nulo.
+        self._timer_senales = QTimer()
+        self._timer_senales.timeout.connect(lambda: None)
+        self._timer_senales.start(200)
+
     def _restore_or_open_default(self) -> None:
         """Restaura la sesión previa o abre la home como pestaña inicial."""
         session_data = SessionManager.load_session()
@@ -139,6 +173,8 @@ class AppController:
         """Guarda la sesión y detiene la telemetría de forma ordenada."""
         log.info("Cierre solicitado — guardando sesión.")
         self.timer_stats.stop()
+        if hasattr(self, "_timer_senales"):
+            self._timer_senales.stop()
         SessionManager.save_session(self.window.tree)
 
     # ─── SIDEBAR TOGGLE ──────────────────────────────────────────────────────

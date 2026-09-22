@@ -92,6 +92,34 @@ motor se salta automáticamente si Qt no está presente.
 
 ---
 
+## Cambios en v11.1 (endurecimiento tras instalación y prueba real)
+
+Verificado instalando el paquete desde cero en Linux/WSL2 y ejecutándolo.
+
+**Seguridad**
+- `inzain.key` se escribía con el umask del proceso (**0o644**): la clave Fernet
+  que protege toda la sesión quedaba legible por cualquier usuario del sistema.
+  Ahora los secretos nacen en **0o600** vía `os.open()` con el modo desde el
+  primer byte — no `open()` + `chmod`, que deja una ventana en la que el archivo
+  es legible por todos. Las claves creadas por versiones anteriores se corrigen
+  al abrirlas, con aviso en el log.
+- Mismo trato para `session_inzain.enc` y para `session_inzain.json` (que sin
+  `cryptography` guarda la sesión **en claro**).
+
+**Corrección de bugs**
+- `_on_quit` cuelga de `aboutToQuit`, que Qt **no** emite cuando el proceso
+  recibe una señal: un `kill`, un cierre de sesión del SO o un apagado perdían
+  el árbol de pestañas sin dejar rastro. Ahora `SIGTERM`/`SIGINT` se traducen a
+  `app.quit()`, que sí dispara el guardado. Hace falta además un `QTimer` que
+  devuelva el control al intérprete cada 200 ms: sin él Qt bloquea dentro de
+  C++ y el manejador de Python no llega a ejecutarse.
+
+**Tests**
+- 4 nuevos (14 en total). Validados por mutación: revertir el código al
+  comportamiento anterior hace fallar los tres de permisos.
+
+---
+
 ## Cambios en v11 (auditoría y mejora)
 
 Partiendo del trío canónico `main.py + inzain_core.py + inzain_ui.py` (v10):

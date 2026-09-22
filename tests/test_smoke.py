@@ -84,3 +84,65 @@ def test_purge_script_definido():
     core = importlib.import_module("inzain_core")
     assert isinstance(core.PURGE_SCRIPT, str)
     assert "querySelectorAll" in core.PURGE_SCRIPT
+
+
+# ─── permisos de los secretos de sesión ───────────────────────────────────────
+# Regresión: inzain.key se escribía con el umask (0o644), legible por cualquier
+# usuario del sistema. Quien lee esa clave Fernet descifra la sesión entera.
+
+def _core():
+    import pytest
+    pytest.importorskip("PyQt6", reason="PyQt6 no instalado en este entorno")
+    import importlib
+    return importlib.import_module("inzain_core")
+
+
+def test_secreto_nace_con_permisos_600(tmp_path):
+    core = _core()
+    destino = tmp_path / "secreto.bin"
+    core.SessionManager._escribir_secreto(str(destino), b"contenido")
+    assert oct(destino.stat().st_mode & 0o777) == "0o600"
+    assert destino.read_bytes() == b"contenido"
+
+
+def test_secreto_sobrescrito_conserva_600(tmp_path):
+    # Un archivo preexistente mantiene sus permisos pese al modo de open():
+    # hay que corregirlos explícitamente.
+    core = _core()
+    destino = tmp_path / "viejo.bin"
+    destino.write_bytes(b"previo")
+    destino.chmod(0o644)
+    core.SessionManager._escribir_secreto(str(destino), b"nuevo")
+    assert oct(destino.stat().st_mode & 0o777) == "0o600"
+
+
+def test_clave_heredada_en_644_se_corrige(tmp_path, monkeypatch):
+    core = _core()
+    if not core.CRYPTO_AVAILABLE:
+        import pytest
+        pytest.skip("cryptography no instalado")
+
+    clave = tmp_path / "inzain.key"
+    monkeypatch.setattr(core.SessionManager, "KEY_FILE", str(clave))
+
+    core.SessionManager._get_cipher()          # la crea
+    assert oct(clave.stat().st_mode & 0o777) == "0o600"
+
+    clave.chmod(0o644)                          # simula versión anterior
+    core.SessionManager._get_cipher()           # debe corregirla al abrirla
+    assert oct(clave.stat().st_mode & 0o777) == "0o600"
+
+
+# ─── cierre ordenado ante señales ─────────────────────────────────────────────
+# Regresión: _on_quit cuelga de aboutToQuit, que Qt no emite ante SIGTERM, así
+# que un kill o un apagado del sistema perdían el árbol de pestañas.
+
+def test_el_controlador_instala_manejadores_de_senal():
+    import inspect
+    fuente = open("main.py", encoding="utf-8").read()
+    assert "_install_signal_handlers" in fuente
+    assert "signal.SIGTERM" in fuente
+    assert "signal.SIGINT" in fuente
+    # El temporizador que devuelve el control al intérprete es imprescindible:
+    # sin él Qt bloquea en C++ y el manejador de Python nunca corre.
+    assert "_timer_senales" in fuente

@@ -287,14 +287,55 @@ class SessionManager:
     DATA_FILE = os.path.join(_BASE_DIR, "session_inzain.enc")
     JSON_FILE = os.path.join(_BASE_DIR, "session_inzain.json")
 
+    # Permisos de secreto: solo el dueño. open() usa el umask (habitualmente
+    # 0o022 -> 0o644), lo que dejaba la clave Fernet legible por cualquier
+    # usuario del sistema. Quien lee inzain.key descifra toda la sesión.
+    _MODO_SECRETO = 0o600
+
+    @staticmethod
+    def _escribir_secreto(path: str, datos: bytes) -> None:
+        """Escribe un archivo sensible sin que pase nunca por 0o644.
+
+        Se crea con O_EXCL y el modo restrictivo desde el primer byte, en vez
+        de abrirlo y corregirlo después: entre el open y el chmod hay una
+        ventana en la que el secreto es legible por todos.
+        """
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                     SessionManager._MODO_SECRETO)
+        try:
+            archivo = os.fdopen(fd, "wb")
+        except Exception:
+            os.close(fd)   # fdopen falló: el descriptor sigue abierto
+            raise
+        with archivo as f:
+            f.write(datos)
+        # Un archivo preexistente conserva sus permisos pese al modo de open().
+        try:
+            os.chmod(path, SessionManager._MODO_SECRETO)
+        except OSError as e:  # noqa: BLE001
+            log.warning("No se pudieron ajustar permisos de %s: %s", path, e)
+
     @staticmethod
     def _get_cipher():
         if not CRYPTO_AVAILABLE:
             return None
         if not os.path.exists(SessionManager.KEY_FILE):
-            with open(SessionManager.KEY_FILE, "wb") as kf:
-                kf.write(Fernet.generate_key())
-            log.info("Nueva clave de sesión generada: %s", SessionManager.KEY_FILE)
+            SessionManager._escribir_secreto(SessionManager.KEY_FILE,
+                                             Fernet.generate_key())
+            log.info("Nueva clave de sesión generada (modo 600): %s",
+                     SessionManager.KEY_FILE)
+        else:
+            # Claves creadas por versiones anteriores quedaron en 0o644.
+            modo = os.stat(SessionManager.KEY_FILE).st_mode & 0o777
+            if modo != SessionManager._MODO_SECRETO:
+                try:
+                    os.chmod(SessionManager.KEY_FILE,
+                             SessionManager._MODO_SECRETO)
+                    log.warning("Clave de sesión tenía permisos %o; corregidos "
+                                "a 600.", modo)
+                except OSError as e:  # noqa: BLE001
+                    log.error("Clave con permisos %o y no se pudo corregir: %s",
+                              modo, e)
         with open(SessionManager.KEY_FILE, "rb") as kf:
             return Fernet(kf.read())
 
@@ -323,15 +364,17 @@ class SessionManager:
             try:
                 cipher = SessionManager._get_cipher()
                 encrypted = cipher.encrypt(json_str.encode("utf-8"))
-                with open(SessionManager.DATA_FILE, "wb") as f:
-                    f.write(encrypted)
+                SessionManager._escribir_secreto(SessionManager.DATA_FILE,
+                                                 encrypted)
                 log.info("Sesión guardada (cifrada): %d nodos raíz.", len(data))
             except Exception as e:  # noqa: BLE001
                 log.error("Error guardando sesión cifrada: %s", e)
         else:
             try:
-                with open(SessionManager.JSON_FILE, "w", encoding="utf-8") as f:
-                    f.write(json_str)
+                # Sin cryptography la sesión queda en claro; al menos que no
+                # la lea cualquier usuario del sistema.
+                SessionManager._escribir_secreto(
+                    SessionManager.JSON_FILE, json_str.encode("utf-8"))
                 log.info("Sesión guardada (JSON plano): %d nodos raíz.", len(data))
             except Exception as e:  # noqa: BLE001
                 log.error("Error guardando sesión JSON: %s", e)
