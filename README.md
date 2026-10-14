@@ -40,8 +40,12 @@ inzain/
 ## Instalación
 
 ```bash
-python -m pip install -r requirements.txt
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
+
+> El `python` del sistema no tiene `PyQt6-WebEngine`: ejecutar siempre con
+> `.venv/bin/python` o con `./run.sh` (que lo exige).
 
 Coloca `splash_fractal_core.png` y `fractal.ico` dentro de `assets/`
 (el arranque funciona igual si faltan: se omiten con un aviso en el log).
@@ -49,7 +53,7 @@ Coloca `splash_fractal_core.png` y `fractal.ico` dentro de `assets/`
 ## Ejecución
 
 ```bash
-python main.py
+./run.sh          # o: .venv/bin/python main.py
 ```
 
 Atajos: `Ctrl+T` nueva pestaña · `Ctrl+W` cerrar · `Ctrl+B` colapsar panel ·
@@ -84,7 +88,7 @@ El logging está **siempre activo**: escribe a `logs/inzain.log` (rotativo, 2 MB
 ## Tests
 
 ```bash
-python -m pytest tests/ -q
+.venv/bin/python -m pytest tests/ -q
 ```
 
 Los tests de `urls.py` y `config.py` corren sin PyQt6 instalado; el test del

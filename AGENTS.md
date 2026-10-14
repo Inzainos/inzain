@@ -26,18 +26,22 @@ assets/            splash + icono
 
 ## Comandos
 
+**Intérprete**: usar SIEMPRE `.venv/bin/python` (o `./run.sh`). El `python`
+del sistema no tiene `PyQt6-WebEngine` y muere en el import.
+
 ```bash
-# Instalar dependencias
-python -m pip install -r requirements.txt
+# Instalar dependencias (primera vez: crear el venv)
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 
 # Ejecutar (desde la raíz del proyecto)
-python main.py
+./run.sh                    # o: .venv/bin/python main.py
 
 # Tests (headless; no requieren GUI)
-python -m pytest tests/ -q
+.venv/bin/python -m pytest tests/ -q
 
 # Ejecutar activando un flag de seguridad para dev local
-INZAIN_ACCEPT_INVALID_CERTS=1 python main.py
+INZAIN_ACCEPT_INVALID_CERTS=1 ./run.sh
 ```
 
 ## Reglas duras (no romper)
