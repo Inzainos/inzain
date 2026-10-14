@@ -289,7 +289,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.btn_reload)
         layout.addWidget(divider())
 
-        self.btn_new = btn("+", tip="Nueva pestaña (Ctrl+T)")
+        self.btn_new = btn("+", tip="Nueva pestaña raíz (Ctrl+T · Ctrl+Shift+T = hija)")
         self.btn_new.setStyleSheet(
             "QPushButton { color: #0f0; border: 1px solid #333; }"
             "QPushButton:hover { border-color: #0f0; background: #002200; }"

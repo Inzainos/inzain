@@ -170,6 +170,52 @@ def test_descarga_conectada_una_sola_vez():
     assert "browser.page().profile().downloadRequested" not in fuente
 
 
+# ─── TTS: fallback a espeak CLI cuando falta aplay ────────────────────────────
+# Regresión: pyttsx3 reproduce con `os.system("aplay ...")` y en WSLg no
+# existe aplay (ni /dev/snd): el síntesis corría sin error pero mudo.
+
+def test_voiceengine_cae_a_cli_si_falta_aplay(monkeypatch):
+    core = _core_mod()
+    monkeypatch.setattr(core.shutil, "which",
+                        lambda n: "/usr/bin/espeak" if n == "espeak" else None)
+    ve = core.VoiceEngine()
+    assert ve._cli_mode is True
+    ve.stop()
+    assert ve.is_busy() is False
+
+
+def test_voiceengine_prefiere_pyttsx3_si_hay_aplay(monkeypatch):
+    core = _core_mod()
+    monkeypatch.setattr(core.shutil, "which",
+                        lambda n: {"aplay": "/usr/bin/aplay",
+                                   "espeak": "/usr/bin/espeak"}.get(n))
+    ve = core.VoiceEngine()
+    assert ve._cli_mode is False
+
+
+# ─── escudo: instalación ÚNICA sobre el perfil compartido ─────────────────────
+# Regresión: cada pestaña re-instalaba el interceptor sobre el defaultProfile,
+# con un '[SHIELD] ACTIVADO' por tab y el último interceptor pisando al resto.
+
+def test_escudo_se_instala_una_sola_vez():
+    fuente = open("inzain_core.py", encoding="utf-8").read()
+    # La llamada real (los comentarios del docstring no cuentan):
+    assert fuente.count("profile.setUrlRequestInterceptor(interceptor)") == 1
+
+
+# ─── árbol fractal: raíces por defecto, hijo explícito ────────────────────────
+# Regresión: add_tab caía siempre bajo la pestaña activa, así que Ctrl+T
+# anidaba infinito y nunca se podía crear una raíz desde la UI.
+
+def test_add_tab_sin_fallback_a_hijo_implicito():
+    fuente = open("main.py", encoding="utf-8").read()
+    # El fallback que anidaba sin querer:
+    assert "parent_item = self.window.tree.currentItem()\n        item" not in fuente
+    # El atajo para crear hijos explícitos existe:
+    assert "Ctrl+Shift+T" in fuente
+    assert "add_child_tab" in fuente
+
+
 # ─── cierre ordenado ante señales ─────────────────────────────────────────────
 # Regresión: _on_quit cuelga de aboutToQuit, que Qt no emite ante SIGTERM, así
 # que un kill o un apagado del sistema perdían el árbol de pestañas.

@@ -15,6 +15,8 @@ se controla desde config.py y queda registrado en el log.
 import json
 import os
 import logging
+import shutil
+import subprocess
 import threading
 
 from PyQt6.QtCore import QUrl, Qt, QObject
@@ -88,12 +90,20 @@ def play_sound(event_type: str) -> None:
 # ─── SINTETIZADOR DE VOZ ──────────────────────────────────────────────────────
 
 class VoiceEngine(QObject):
-    """Motor TTS (pyttsx3). Opera en hilo separado para no bloquear la UI."""
+    """Motor TTS (pyttsx3) con fallback a espeak CLI.
+
+    pyttsx3 reproduce el WAV resultante mediante `aplay` (ALSA). En WSLg no
+    existe /dev/snd ni aplay: el síntesis "funciona" pero el audio nunca
+    suena. Si falta aplay (o pyttsx3 no pudo inicializar), se habla directo
+    con el CLI `espeak`, que sí sabe llegar al PulseAudio de WSLg.
+    """
 
     def __init__(self) -> None:
         super().__init__()
         self.engine = None
         self._lock = threading.Lock()
+        self._proc = None
+        self._cli_mode = False
 
         if VOICE_AVAILABLE:
             try:
@@ -103,12 +113,65 @@ class VoiceEngine(QObject):
             except Exception as e:  # noqa: BLE001
                 log.warning("VoiceEngine no pudo inicializar: %s", e)
 
+        # Decisión de ruta de audio: CLI si pyttsx3 no existe/no reprodujo,
+        # o si falta aplay y hay espeak disponible.
+        faltan_piezas = self.engine is None or shutil.which("aplay") is None
+        if faltan_piezas and shutil.which("espeak"):
+            self._cli_mode = True
+            log.info("TTS: aplay/pyttsx3 no disponibles — se usa espeak CLI (PulseAudio).")
+        elif self.engine is None:
+            log.warning("TTS: sin pyttsx3 ni espeak CLI — lectura por voz deshabilitada.")
+
+    # ── API pública (independiente de la ruta interna) ────────────────────────
+
     def speak(self, text: str) -> None:
         """Lanza la lectura de texto en un hilo demonio."""
-        if not self.engine or not text:
+        if not text:
             return
-        t = threading.Thread(target=self._run_speak, args=(text,), daemon=True)
-        t.start()
+        if self._cli_mode:
+            t = threading.Thread(target=self._run_cli, args=(text,), daemon=True)
+            t.start()
+        elif self.engine:
+            t = threading.Thread(target=self._run_speak, args=(text,), daemon=True)
+            t.start()
+
+    def is_busy(self) -> bool:
+        """True si hay una lectura en curso."""
+        if self._cli_mode:
+            return self._proc is not None and self._proc.poll() is None
+        return bool(self.engine and self.engine.isBusy())
+
+    def stop(self) -> None:
+        """Detiene la lectura en curso."""
+        if self._cli_mode:
+            proc = self._proc
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.terminate()
+                except Exception as e:  # noqa: BLE001
+                    log.debug("TTS CLI stop error: %s", e)
+            return
+        if self.engine:
+            try:
+                self.engine.stop()
+            except Exception as e:  # noqa: BLE001
+                log.debug("VoiceEngine.stop error: %s", e)
+
+    # ── Rutas internas ─────────────────────────────────────────────────────────
+
+    def _run_cli(self, text: str) -> None:
+        with self._lock:
+            try:
+                self._proc = subprocess.Popen(
+                    ["espeak", "-s", str(config.TTS_RATE),
+                     text[:config.TTS_CHAR_LIMIT]],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                self._proc.wait()
+            except Exception as e:  # noqa: BLE001
+                log.debug("TTS CLI error: %s", e)
+            finally:
+                self._proc = None
 
     def _run_speak(self, text: str) -> None:
         with self._lock:  # evita lecturas solapadas
@@ -119,14 +182,6 @@ class VoiceEngine(QObject):
                 self.engine.runAndWait()
             except Exception as e:  # noqa: BLE001
                 log.debug("TTS error: %s", e)
-
-    def stop(self) -> None:
-        """Detiene la lectura en curso."""
-        if self.engine:
-            try:
-                self.engine.stop()
-            except Exception as e:  # noqa: BLE001
-                log.debug("VoiceEngine.stop error: %s", e)
 
 
 # ─── SCRIPT DE PURGA VISUAL (Anti-Ads) ────────────────────────────────────────
@@ -199,8 +254,39 @@ class InzainPage(QWebEnginePage):
 
 # ─── MOTOR WEB VISUAL ─────────────────────────────────────────────────────────
 
+def configurar_perfil() -> None:
+    """Configura el perfil default (COMPARTIDO por todas las pestañas) UNA vez.
+
+    Llamar antes de crear la primera vista. Antes esto corría dentro de cada
+    InzainWebEngine: el interceptor del escudo se re-instalaba por pestaña
+    (un '[SHIELD] ACTIVADO' por tab en el log) y el último setUrlRequestInterceptor
+    pisaba al anterior.
+    """
+    profile = QWebEngineProfile.defaultProfile()
+    data_path = os.path.join(_BASE_DIR, "inzain_data")
+    profile.setPersistentStoragePath(data_path)
+    profile.setCachePath(data_path)
+
+    if config.USE_FAKE_UA:
+        profile.setHttpUserAgent(config.FAKE_UA)
+        log.info("[UA] User-Agent anti-detección ACTIVADO.")
+
+    if config.ENABLE_SHIELD:
+        interceptor = SecurityShield()
+        # setUrlRequestInterceptor no toma ownership: sin esta referencia el
+        # interceptor moriría en el GC y la app crashearía al interceptar.
+        configurar_perfil.interceptor = interceptor
+        profile.setUrlRequestInterceptor(interceptor)
+        log.info("[SHIELD] Escudo de red ACTIVADO (%d dominios).",
+                 len(interceptor.blacklist))
+
+
 class InzainWebEngine(QWebEngineView):
-    """Vista web con perfil persistente, escudo y permisos según config."""
+    """Vista web con escudo y permisos según config.
+
+    El perfil (persistencia, UA, escudo) se configura UNA vez en
+    `configurar_perfil()`; esta clase solo crea la vista.
+    """
 
     _ALLOWED_FEATURES = None  # cache de clase
 
@@ -210,25 +296,7 @@ class InzainWebEngine(QWebEngineView):
         # 1. Página personalizada (filtro de consola JS)
         self.setPage(InzainPage(self))
 
-        # 2. Perfil persistente
-        profile = QWebEngineProfile.defaultProfile()
-        data_path = os.path.join(_BASE_DIR, "inzain_data")
-        profile.setPersistentStoragePath(data_path)
-        profile.setCachePath(data_path)
-
-        if config.USE_FAKE_UA:
-            profile.setHttpUserAgent(config.FAKE_UA)
-            log.info("[UA] User-Agent anti-detección ACTIVADO.")
-
-        # 3. Escudo de red (ahora sí conectado, según config)
-        self.interceptor = None
-        if config.ENABLE_SHIELD:
-            self.interceptor = SecurityShield()
-            profile.setUrlRequestInterceptor(self.interceptor)
-            log.info("[SHIELD] Escudo de red ACTIVADO (%d dominios).",
-                     len(self.interceptor.blacklist))
-
-        # 4. Configuración de funcionalidades web
+        # 2. Configuración de funcionalidades web
         s = self.settings()
         s.setAttribute(QWebEngineSettings.WebAttribute.AutoLoadImages, True)
         s.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
@@ -241,10 +309,10 @@ class InzainWebEngine(QWebEngineView):
             config.ALLOW_INSECURE_CONTENT,
         )
 
-        # 5. Permisos de medios (según config)
+        # 3. Permisos de medios (según config)
         self.page().featurePermissionRequested.connect(self._grant_permission)
 
-        # 6. Zoom inicial y manejo de TLS
+        # 4. Zoom inicial y manejo de TLS
         self.setZoomFactor(1.0)
         self.page().certificateError.connect(self._handle_certificate_error)
 

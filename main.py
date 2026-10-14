@@ -25,6 +25,7 @@ import psutil
 
 from inzain_core import (
     InzainWebEngine, SessionManager, play_sound, VoiceEngine, PURGE_SCRIPT,
+    configurar_perfil,
 )
 from urls import resolve_url
 from inzain_ui import MainWindow, SplashScreen
@@ -81,6 +82,9 @@ class AppController:
 
     def _init_core(self) -> None:
         """Inicializa los componentes principales."""
+        # Perfil COMPARTIDO (persistencia, UA, escudo): UNA sola vez y antes
+        # de crear la primera vista.
+        configurar_perfil()
         play_sound("startup")
         self.voice_bot = VoiceEngine()
         self.window = MainWindow()
@@ -117,6 +121,7 @@ class AppController:
         QShortcut(QKeySequence("Ctrl+="), w).activated.connect(self.zoom_in)  # sin Shift
         QShortcut(QKeySequence("Ctrl+-"), w).activated.connect(self.zoom_out)
         QShortcut(QKeySequence("Ctrl+T"), w).activated.connect(lambda: self.add_tab(config.HOME_URL))
+        QShortcut(QKeySequence("Ctrl+Shift+T"), w).activated.connect(self.add_child_tab)
         QShortcut(QKeySequence("Ctrl+W"), w).activated.connect(self.remove_current_tab)
         QShortcut(QKeySequence("F5"), w).activated.connect(self.nav_reload)
 
@@ -229,7 +234,13 @@ class AppController:
     # ─── PESTAÑAS ────────────────────────────────────────────────────────────
 
     def add_tab(self, url: str, title: str = "NEW_NODE", parent_item=None) -> None:
-        """Crea una nueva pestaña y la agrega al árbol fractal."""
+        """Crea una nueva pestaña y la agrega al árbol fractal.
+
+        Sin `parent_item` la pestaña es una RAÍZ del árbol. Antes caía
+        siempre bajo la pestaña activa, así que Ctrl+T anidaba cada vez más
+        profundo y las raíces solo podían nacer de la sesión restaurada.
+        Para crear un HIJO se usa `add_child_tab` (Ctrl+Shift+T).
+        """
         play_sound("new_tab")
         browser = InzainWebEngine()
         browser.setUrl(QUrl(url))
@@ -242,12 +253,19 @@ class AppController:
 
         self.window.stack.addWidget(browser)
 
-        if not parent_item:
-            parent_item = self.window.tree.currentItem()
         item = self.window.add_node(title, parent_item)
         item.setData(0, Qt.ItemDataRole.UserRole, browser)
         self.window.tree.setCurrentItem(item)
-        log.info("Nueva pestaña: %s", url)
+        log.info("Nueva pestaña: %s%s", url,
+                 "" if parent_item is None else " (hija)")
+
+    def add_child_tab(self) -> None:
+        """Crea un HIJO bajo la pestaña activa (árbol fractal).
+
+        Si el árbol está vacío, `currentItem()` es None y la pestaña nace
+        como raíz — degradación natural.
+        """
+        self.add_tab(config.HOME_URL, parent_item=self.window.tree.currentItem())
 
     def remove_current_tab(self) -> None:
         """Elimina la pestaña activa del árbol fractal."""
@@ -298,7 +316,7 @@ class AppController:
         b = self._current_browser()
         if not b:
             return
-        if self.voice_bot.engine and self.voice_bot.engine.isBusy():
+        if self.voice_bot.is_busy():
             self.voice_bot.stop()
         else:
             b.page().toPlainText(

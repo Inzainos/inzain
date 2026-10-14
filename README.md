@@ -56,7 +56,8 @@ Coloca `splash_fractal_core.png` y `fractal.ico` dentro de `assets/`
 ./run.sh          # o: .venv/bin/python main.py
 ```
 
-Atajos: `Ctrl+T` nueva pestaña · `Ctrl+W` cerrar · `Ctrl+B` colapsar panel ·
+Atajos: `Ctrl+T` nueva pestaña raíz · `Ctrl+Shift+T` nueva pestaña hija de la
+activa (árbol fractal) · `Ctrl+W` cerrar · `Ctrl+B` colapsar panel ·
 `F5` recargar · `Ctrl++` / `Ctrl+-` zoom.
 
 ## Configuración y seguridad
