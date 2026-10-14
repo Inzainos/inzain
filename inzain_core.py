@@ -152,6 +152,23 @@ PURGE_SCRIPT = """
 
 # ─── ESCUDO DE RED ────────────────────────────────────────────────────────────
 
+def host_bloqueado(host: str, blacklist: tuple) -> bool:
+    """True si el host coincide exactamente o como subdominio de un dominio bloqueado.
+
+    Se compara contra el HOST, no contra la URL completa: un substring tipo
+    `"criteo.com" in url` bloqueaba cualquier página cuyo path o query
+    contuviera el nombre del dominio (falso positivo).
+    """
+    h = (host or "").lower()
+    if not h:
+        return False
+    for domain in blacklist:
+        d = domain.lower()
+        if h == d or h.endswith("." + d):
+            return True
+    return False
+
+
 class SecurityShield(QWebEngineUrlRequestInterceptor):
     """Interceptor de requests: bloquea dominios de publicidad y tracking."""
 
@@ -162,12 +179,10 @@ class SecurityShield(QWebEngineUrlRequestInterceptor):
         self.blacklist = tuple(blacklist if blacklist is not None else config.SHIELD_BLACKLIST)
 
     def interceptRequest(self, info) -> None:
-        url = info.requestUrl().toString().lower()
-        for domain in self.blacklist:
-            if domain in url:
-                log.debug("[SHIELD] Bloqueado: %s", url[:80])
-                info.redirect(QUrl(self._VOID))
-                return
+        host = info.requestUrl().host()
+        if host_bloqueado(host, self.blacklist):
+            log.debug("[SHIELD] Bloqueado: %s", info.requestUrl().toString()[:80])
+            info.redirect(QUrl(self._VOID))
 
 
 # ─── PÁGINA PERSONALIZADA ─────────────────────────────────────────────────────

@@ -133,6 +133,43 @@ def test_clave_heredada_en_644_se_corrige(tmp_path, monkeypatch):
     assert oct(clave.stat().st_mode & 0o777) == "0o600"
 
 
+# ─── escudo: matching por HOST, no por substring de la URL ────────────────────
+# Regresión: `if domain in url` sobre la URL completa daba falsos positivos
+# (cualquier path/query que contuviera el nombre de un dominio bloqueaba).
+
+def _core_mod():
+    import pytest
+    pytest.importorskip("PyQt6", reason="PyQt6 no instalado en este entorno")
+    import importlib
+    return importlib.import_module("inzain_core")
+
+
+def test_host_bloqueado_dominio_exacto_y_subdominio():
+    core = _core_mod()
+    assert core.host_bloqueado("doubleclick.net", ("doubleclick.net",)) is True
+    assert core.host_bloqueado("ad.doubleclick.net", ("doubleclick.net",)) is True
+    assert core.host_bloqueado("adservice.google.com", ("adservice.google.com",)) is True
+
+
+def test_host_bloqueado_no_cae_en_falsos_positivos():
+    core = _core_mod()
+    # El dominio dentro del HOST de otra persona, o vacío: no se bloquea.
+    assert core.host_bloqueado("notdoubleclick.net", ("doubleclick.net",)) is False
+    assert core.host_bloqueado("example.com", ("criteo.com",)) is False
+    assert core.host_bloqueado("", ("criteo.com",)) is False
+
+
+# ─── descargas: una sola conexión al perfil COMPARTIDO ────────────────────────
+# Regresión: cada pestaña conectaba downloadRequested al defaultProfile, que es
+# el mismo objeto para todas → con N pestañas, una descarga abría N diálogos.
+
+def test_descarga_conectada_una_sola_vez():
+    fuente = open("main.py", encoding="utf-8").read()
+    assert fuente.count("downloadRequested.connect") == 1
+    # La conexión per-tab (la del bug) no debe volver a existir.
+    assert "browser.page().profile().downloadRequested" not in fuente
+
+
 # ─── cierre ordenado ante señales ─────────────────────────────────────────────
 # Regresión: _on_quit cuelga de aboutToQuit, que Qt no emite ante SIGTERM, así
 # que un kill o un apagado del sistema perdían el árbol de pestañas.

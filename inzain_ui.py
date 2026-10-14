@@ -331,9 +331,25 @@ class MainWindow(QMainWindow):
         return item
 
     def remove_node(self, item: QTreeWidgetItem) -> None:
-        """Elimina un nodo (y destruye su browser asociado) del árbol fractal."""
-        browser = item.data(0, Qt.ItemDataRole.UserRole)
-        if browser is not None:
+        """Elimina un nodo del árbol fractal, destruyendo su browser y el de
+        todos sus descendientes.
+
+        Sin la recursión, cerrar un nodo padre dejaba los browsers de los
+        hijos huérfanos dentro del QStackedWidget: fugas de memoria y
+        procesos QtWebEngine vivos para siempre.
+        """
+        browsers = []
+
+        def _coleccionar(node):
+            browser = node.data(0, Qt.ItemDataRole.UserRole)
+            if browser is not None:
+                browsers.append(browser)
+            for i in range(node.childCount()):
+                _coleccionar(node.child(i))
+
+        _coleccionar(item)
+
+        for browser in browsers:
             for i in range(self.stack.count()):
                 if self.stack.widget(i) is browser:
                     self.stack.removeWidget(browser)
@@ -347,4 +363,4 @@ class MainWindow(QMainWindow):
             idx = self.tree.indexOfTopLevelItem(item)
             if idx >= 0:
                 self.tree.takeTopLevelItem(idx)
-        log.debug("Nodo eliminado del árbol.")
+        log.debug("Nodo eliminado del árbol (con %d browsers).", len(browsers))

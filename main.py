@@ -18,6 +18,7 @@ log = setup_logging()
 from PyQt6.QtWidgets import QApplication, QFileDialog
 from PyQt6.QtGui import QIcon, QPixmap, QKeySequence, QShortcut
 from PyQt6.QtCore import QUrl, QTimer, Qt
+from PyQt6.QtWebEngineCore import QWebEngineProfile
 
 import config
 import psutil
@@ -104,6 +105,11 @@ class AppController:
         w.btn_clean.clicked.connect(self.clean_current_page)
         w.url_bar.returnPressed.connect(self.navigate)
         w.tree.currentItemChanged.connect(self.switch_tab)
+
+        # Descargas: el perfil default es COMPARTIDO por todas las pestañas.
+        # Conectarlo por pestaña (como se hacía en add_tab) disparaba un
+        # diálogo de guardado por cada pestaña abierta ante una sola descarga.
+        QWebEngineProfile.defaultProfile().downloadRequested.connect(self.handle_download)
 
         # Atajos de teclado
         QShortcut(QKeySequence("Ctrl+B"), w).activated.connect(self.toggle_sidebar)
@@ -233,7 +239,6 @@ class AppController:
         browser.loadProgress.connect(self.window.progress_bar.setValue)
         browser.loadFinished.connect(self.window.progress_bar.hide)
         browser.page().linkHovered.connect(self.show_link_preview)
-        browser.page().profile().downloadRequested.connect(self.handle_download)
 
         self.window.stack.addWidget(browser)
 
